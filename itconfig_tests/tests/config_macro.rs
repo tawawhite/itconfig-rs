@@ -179,6 +179,19 @@ fn configuration_with_namespace() {
     assert_eq!(cfg::DB::HOST(), true);
 }
 
+#[test]
+fn configuration_with_nested_namespaces() {
+    config! {
+        APP {
+            RECIPES {
+                PER_PAGE => 50,
+            }
+        }
+    }
+
+    cfg::init();
+}
+
 
 #[test]
 fn configuration_variables_and_namespace_in_lowercase() {

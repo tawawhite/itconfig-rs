@@ -343,6 +343,7 @@ macro_rules! __itconfig_parse_module {
             module = {
                 env_prefix = "",
                 name = $name,
+                root = true,
             },
         }
     };
@@ -368,9 +369,11 @@ macro_rules! __itconfig_parse_variables {
         __itconfig_parse_variables! {
             tokens = [$($ns_tokens)*],
             variables = [],
+            namespaces = [],
             module = {
                 env_prefix = concat!(stringify!($ns_name), "_"),
                 name = $ns_name,
+                root = false,
             },
             callback = {
                 tokens = [$($rest)*],
@@ -526,9 +529,8 @@ macro_rules! __itconfig_parse_variables {
     (
         tokens = [],
         variables = $ns_variables:tt,
-        module = {
-            $($current_namespace:tt)*
-        },
+        namespaces = $ns_namespaces:tt,
+        module = $ns_module:tt,
         callback = {
             tokens = $tokens:tt,
             variables = $variables:tt,
@@ -543,7 +545,8 @@ macro_rules! __itconfig_parse_variables {
                 $($namespaces,)*
                 {
                     variables = $ns_variables,
-                    $($current_namespace)*
+                    namespaces = $ns_namespaces,
+                    module = $ns_module,
                 },
             ],
             $($args)*
@@ -555,7 +558,7 @@ macro_rules! __itconfig_parse_variables {
         tokens = [],
         $($args:tt)*
     ) => {
-        __itconfig_impl!($($args)*);
+        __itconfig_impl_namespace!($($args)*);
     };
 
     // Invalid syntax
@@ -567,7 +570,7 @@ macro_rules! __itconfig_parse_variables {
 
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __itconfig_impl {
+macro_rules! __itconfig_impl_namespace {
     (
         variables = [$({
             meta = $var_meta:tt,
@@ -575,19 +578,11 @@ macro_rules! __itconfig_impl {
             name = $var_name:ident,
             $($variable:tt)*
         },)*],
-        namespaces = [$({
-            variables = [$({
-                meta = $ns_var_meta:tt,
-                concat = $ns_var_concat:tt,
-                name = $ns_var_name:ident,
-                $($ns_variables:tt)*
-            },)*],
-            env_prefix = $ns_env_prefix:expr,
-            name = $ns_name:ident,
-        },)*],
+        namespaces = [$({ $($namespace:tt)* },)*],
         module = {
             env_prefix = $env_prefix:expr,
             name = $mod_name:ident,
+            root = $root:tt,
         },
     ) => {
         pub mod $mod_name {
@@ -595,26 +590,33 @@ macro_rules! __itconfig_impl {
             use std::env;
             use itconfig::EnvValue;
 
-            $(
-                pub mod $ns_name {
-                    use std::env;
-                    use itconfig::EnvValue;
+            $(__itconfig_impl_namespace! { $($namespace)* })*
 
-                    $(__itconfig_variable! {
-                        meta = $ns_var_meta,
-                        concat = $ns_var_concat,
-                        name = $ns_var_name,
-                        env_prefix = $ns_env_prefix,
-                        $($ns_variables)*
-                    })*
-                }
-            )*
-
-            pub fn init() {
-                $($var_name();)*
-
-                $($($ns_name::$ns_var_name();)*)*
+            macro_rules! impl_init {
+                (true) => {
+                    pub fn init() {
+                        __itconfig_impl_namespace! {
+                            @call
+                            variables = [$({
+                                meta = $var_meta,
+                                concat = $var_concat,
+                                name = $var_name,
+                                $($variable)*
+                            },)*],
+                            namespaces = [$({ $($namespace)* },)*],
+                            module = {
+                                env_prefix = $env_prefix,
+                                name = $mod_name,
+                                root = $root,
+                            },
+                        }
+                    }
+                };
+                (false) => {}
             }
+
+            impl_init!($root);
+
 
             $(__itconfig_variable! {
                 meta = $var_meta,
@@ -624,6 +626,36 @@ macro_rules! __itconfig_impl {
                 $($variable)*
             })*
         }
+    };
+
+    (
+        @call
+        variables = [$({
+            meta = $meta:tt,
+            concat = $concat:tt,
+            name = $var_name:ident,
+            $($variable:tt)*
+        },)*],
+        namespaces = [$({ $($namespace:tt)* },)*],
+        module = {
+            env_prefix = $ignore:expr,
+            name = $mod_name:ident,
+            root = $root:tt,
+        },
+    ) => {
+        macro_rules! call_fn {
+            (true) => { $($var_name();)* };
+            (false) => { $($mod_name::$var_name();)* };
+        }
+
+        call_fn!($root);
+
+        $(
+            __itconfig_impl_namespace! {
+                @call
+                $($namespace)*
+            }
+        )*
     };
 
     // Invalid syntax
